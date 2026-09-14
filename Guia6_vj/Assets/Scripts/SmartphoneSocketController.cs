@@ -26,12 +26,19 @@ public class SmartphoneSocketController : MonoBehaviour
 
     public void Connect()
     {
-        string ip = ipField.text.Trim();
-        int port = int.Parse(portField.text);
-        client = new TcpClient();
-        client.Connect(ip, port);
-        stream = client.GetStream();
-        SetStatus($"Conectado a {ip}:{port}");
+        try
+        {
+            string ip = ipField.text.Trim();
+            int port = int.Parse(portField.text.Trim());
+            client = new TcpClient();
+            client.Connect(ip, port);
+            stream = client.GetStream();
+            SetStatus($"Conectado a {ip}:{port}");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Error de conexión: {ex.Message}");
+        }
     }
 
     private void Update()
@@ -44,21 +51,42 @@ public class SmartphoneSocketController : MonoBehaviour
 
     private void SendCurrentInput()
     {
-        RemoteControlMessage message = new RemoteControlMessage
+        if (stream == null) return;
+
+        try
         {
-            x = moveXSlider.value,
-            z = moveZSlider.value,
-            yaw = yawSlider.value,
-            grab = grabRequested,
-            release = releaseRequested
-        };
+            RemoteControlMessage message = new RemoteControlMessage
+            {
+                x = moveXSlider != null ? moveXSlider.value : 0f,
+                z = moveZSlider != null ? moveZSlider.value : 0f,
+                yaw = yawSlider != null ? yawSlider.value : 0f,
+                grab = grabRequested,
+                release = releaseRequested
+            };
 
-        string json = JsonUtility.ToJson(message) + "\n";
-        byte[] data = Encoding.UTF8.GetBytes(json);
-        stream.Write(data, 0, data.Length);
+            string json = JsonUtility.ToJson(message) + "\n";
+            byte[] data = Encoding.UTF8.GetBytes(json);
+            stream.Write(data, 0, data.Length);
 
-        grabRequested = false;
-        releaseRequested = false;
+            grabRequested = false;
+            releaseRequested = false;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"Error enviando datos: {ex.Message}");
+            Disconnect();
+        }
+    }
+
+    // --- NUEVO MÉTODO PARA EL BOTÓN DE FRENAR ---
+    public void ResetSliders()
+    {
+        if (moveXSlider != null) moveXSlider.value = 0f;
+        if (moveZSlider != null) moveZSlider.value = 0f;
+        if (yawSlider != null) yawSlider.value = 0f;
+
+        // Enviar inmediatamente la orden de detenerse al servidor
+        SendCurrentInput();
     }
 
     public void RequestGrab() => grabRequested = true;
