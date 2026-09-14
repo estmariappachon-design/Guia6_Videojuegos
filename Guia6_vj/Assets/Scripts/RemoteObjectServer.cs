@@ -32,6 +32,13 @@ public class RemoteObjectServer : MonoBehaviour
     [SerializeField] private Transform holdPoint;
     [SerializeField] private float grabRadius = 1.5f;
 
+    [Header("Movement Limits")]
+    [SerializeField] private bool useLimits = true;
+    [SerializeField] private float minX = -8.5f;
+    [SerializeField] private float maxX = 8.5f;
+    [SerializeField] private float minZ = -8.5f;
+    [SerializeField] private float maxZ = 8.5f;
+
     private TcpListener listener;
     private TcpClient connectedClient;
     private Thread acceptThread;
@@ -89,22 +96,47 @@ public class RemoteObjectServer : MonoBehaviour
         byte[] buffer = new byte[1024];
         StringBuilder pendingText = new StringBuilder();
 
-        while (running && client.Connected)
+        try
         {
-            int count = stream.Read(buffer, 0, buffer.Length);
-            if (count == 0) break;
+            while (running && client != null && client.Connected)
+            {
+                int count = stream.Read(buffer, 0, buffer.Length);
+                if (count == 0) break;
 
-            string chunk = Encoding.UTF8.GetString(buffer, 0, count);
-            pendingText.Append(chunk);
+                string chunk = Encoding.UTF8.GetString(buffer, 0, count);
+                pendingText.Append(chunk);
 
-            string text = pendingText.ToString();
-            string[] lines = text.Split('\n');
+                string text = pendingText.ToString();
+                string[] lines = text.Split('\n');
 
-            for (int i = 0; i < lines.Length - 1; i++)
-                incomingLines.Enqueue(lines[i]);
+                for (int i = 0; i < lines.Length - 1; i++)
+                {
+                    string cleanLine = lines[i].Trim();
+                    if (!string.IsNullOrEmpty(cleanLine))
+                    {
+                        incomingLines.Enqueue(cleanLine);
+                    }
+                }
 
-            pendingText.Clear();
-            pendingText.Append(lines[lines.Length - 1]);
+                pendingText.Clear();
+                pendingText.Append(lines[lines.Length - 1]);
+            }
+        }
+        catch (SocketException ex)
+        {
+            Debug.LogWarning($"Cliente desconectado por SocketException: {ex.Message}");
+        }
+        catch (System.IO.IOException ex)
+        {
+            Debug.LogWarning($"Conexión interrumpida por el host: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Error en ReadLoop: {ex.Message}");
+        }
+        finally
+        {
+            client?.Close();
         }
     }
 
@@ -112,13 +144,23 @@ public class RemoteObjectServer : MonoBehaviour
     {
         while (incomingLines.TryDequeue(out string line))
         {
-            RemoteControlMessage message = JsonUtility.FromJson<RemoteControlMessage>(line);
-            currentInput.x = Mathf.Clamp(message.x, -1f, 1f);
-            currentInput.z = Mathf.Clamp(message.z, -1f, 1f);
-            currentInput.yaw = Mathf.Clamp(message.yaw, -1f, 1f);
+            try
+            {
+                RemoteControlMessage message = JsonUtility.FromJson<RemoteControlMessage>(line);
+                if (message != null)
+                {
+                    currentInput.x = Mathf.Clamp(message.x, -1f, 1f);
+                    currentInput.z = Mathf.Clamp(message.z, -1f, 1f);
+                    currentInput.yaw = Mathf.Clamp(message.yaw, -1f, 1f);
 
-            if (message.grab) TryGrab();
-            if (message.release) Release();
+                    if (message.grab) TryGrab();
+                    if (message.release) Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Error procesando JSON: {ex.Message}");
+            }
         }
 
         ApplyMovement();
@@ -126,8 +168,19 @@ public class RemoteObjectServer : MonoBehaviour
 
     private void ApplyMovement()
     {
+        // 1. Calcular el movimiento según el input recibido
         Vector3 movement = new Vector3(currentInput.x, 0f, currentInput.z);
-        controlledObject.Translate(movement * moveSpeed * Time.deltaTime, Space.World);
+        Vector3 newPos = controlledObject.position + (movement * moveSpeed * Time.deltaTime);
+
+        // 2. Aplicar límites si la casilla está marcada en el Inspector
+        if (useLimits)
+        {
+            newPos.x = Mathf.Clamp(newPos.x, minX, maxX);
+            newPos.z = Mathf.Clamp(newPos.z, minZ, maxZ);
+        }
+
+        // 3. Aplicar posición y rotación final
+        controlledObject.position = newPos;
         controlledObject.Rotate(Vector3.up, currentInput.yaw * rotationSpeed * Time.deltaTime, Space.World);
     }
 
